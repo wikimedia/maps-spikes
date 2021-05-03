@@ -9,10 +9,11 @@
 #### Scenario
 
 - We have preloaded our PostGIS DB with a predefined area (specifically `"asia/israel-and-palestine"`)
-- We have pregenerated tiles for a specific BBOX (specifically `x/y/z = 4/9/6`) stored in
+- We have pregenerated vector tiles for a specific BBOX (specifically `x/y/z = 4/9/6`) stored in
   - Swift object storage (via tegola)
   - Cassandra (via tilerator)
 - We request a random tile included in the BBOX already pregenerated
+- For consistency between stacks we use openmaptiles data schema and osm-bright style
 
 ##### System
 
@@ -36,8 +37,11 @@
   - 12 cores/24 threads
   - 124 GB memory
 
-- (sampled) [Cache miss varnish traffic](https://turnilo.wikimedia.org/#webrequest_sampled_128/4/N4IgbglgzgrghgGwgLzgFwgewHYgFwhLYCmAtAMYAWcATmiADTjTxKoY4DKxaG2A5lHyh+NTDAAO3GhGJC8AM0RRiAXyYYAtsWQ5i+EAFE05APQBVACoBhRiAUQEaYjXkBtUGgCeE/QS36TDTECgYA+mEBdgEASnACcvgeIFBotPQEAEwADJkAjKTZAMykRXmWeXl42dnV2QB0NdkAWnbE2AAmBjn5hQAspdkVVTV1jTWtqgC66p4+filoMgJ2waEEMDJhlJipdnDkHLgEELhMYIgwiXhuIJpwElD1AO4QANYQ2h0QcPWYNPwQFMmNhMBklAgVLMQN5fAZUstAUEQgYAB5hcgHSiBEAHI4Gcg4NKnITnS7XW6aaBCYEgUHg5RqWlQCRINDuOZw/yfHHfbTYKBYY4gCJRJiieIwBC0CDeAwABTyABE7FB/hlQGtwpEedF5gY+e1BTg7N9gochQY4FByO1vit1IRPrL8NgpQhpkwVDIKZqQi52raDJRZaT7P97hqYfqCB0QnApfQyQgrgYQI7YQttNbNvpPSAJKcSB0lTyBUL3LTC9hi5x1cHQ+mgA) to `maps.wikimedia.org`
-- (sampled) [All varnish traffic](https://turnilo.wikimedia.org/#webrequest_sampled_128/4/N4IgbglgzgrghgGwgLzgFwgewHYgFwhLYCmAtAMYAWcATmiADTjTxKoY4DKxaG2A5lHyh+NTDAAO3GhGJC8AM0RRiAXyYYAtsWQ5i+EAFE05APQBVACoBhRiAUQEaYjXkBtUGgCeE/QS36TDTECgYA+mEBdgEASnACcvgeIFBotPQEAEwADJkAjKTZAMykRXmWeXl42dnV2QB0NdkAWnbE2AAmBjn5hQAspdkVVTV1jTWtqgC66p4+filoMgJ2waEEMDJhlJipdnDkHLgEELhMYIgwiXhuIJpwElD1AO4QANYQ2h0QcPWYNPwQFMmNhMBklAgVNMmFAJEg0O45r4DFEmN9tNgoFhjiAIqiQKJ4jAELQIN4DAAFPIAETsUH+GVAa3CkU+gRA3mRBHR7SxODs32Ch2xBjgUHI7W+K3UhE+ZPw2GJCGhKRcskRIDWLnaEoMlDJQiYCn+90ZHPmBg6ITgxPo50uCxAMs5C20Ys2+hVElOJA61LZmOx7mBIG92F9nAZeoNTqAA===) to `maps.wikimedia.org`
+- Cache ratio
+  - For a timewindow of 1 month (webrequest dataset sampled 1/128)
+    - all traffic: ~13 m requests
+    - cache hit traffic: ~9 m requests
+    - cache miss traffic: ~4 m requests
 
 #### Results
 
@@ -98,6 +102,8 @@ Reference tile is `(z/x/y: 4/9/6)` for zoom level 0-12 and both processes are ru
 
 #### Findings
 
+- For reqular load (around twice the requests in current production)
+  - Tegola (backed by swift) and cassandra backends performed equally well
 - For very high load (saturated CPU) kartotherian backed by swift
   - introduced a lot of latency which led to timeouts from swift
   - in extreme cases because of lack of connection pooling kartotherian was running out of tcp sockets
@@ -107,4 +113,12 @@ Reference tile is `(z/x/y: 4/9/6)` for zoom level 0-12 and both processes are ru
   - because of connection pooling introduced a lot of latency but eventually returned tiles without any errors
 - When errors are encountered on maps source fetching kartotherian returned no errors instead it returned an empty tile
   - can be very misleading since response has 20x status code
-- Roughly 60% of the traffic is a cache miss in the varnish level.
+- For tile pregeneration
+  - Tegola backed pregeneration was faster than tilerator/cassandra
+- Given our current traffic it might be interesting to see how the system behaves by introducing more on-the-fly tile generation
+  - Currently tile pregeneration is a process that takes so long that it doesn't manage to finish between 2 OSM syncs
+  - We pregenerate tiles that we eventually might never use
+- Given our traffic we can find interesting tile pregeneration caching strategies that are more efficient instead of full planet pregeneration.
+  - Focus on some specific zoom levels
+  - Analyze where most of the traffic lands and optimize for that
+  - Let tiles get cached organically with time
